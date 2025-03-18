@@ -76,7 +76,7 @@ void loop() {
   } else {
     // HC-SR04: Average 50 measurements
     int numReadings = 50;
-    long sum = 0;
+    float sum = 0.0;
     for (int i = 0; i < numReadings; i++) {
       digitalWrite(trigPin, LOW);
       delayMicroseconds(2);
@@ -84,13 +84,14 @@ void loop() {
       delayMicroseconds(10);
       digitalWrite(trigPin, LOW);
       long duration = pulseIn(echoPin, HIGH);
-      int distance = duration * 0.0344 / 2;
+      float distance = (duration * 0.0344) / 2.0;  // distance in cm
       sum += distance;
       delay(50);  // Short delay between readings
     }
-    int avgDistance = sum / numReadings;
+    float avgDistance = sum / numReadings;
+    avgDistance += 1.5;  // Adjust for the sensor height
     Serial.print("Distance (HC-SR04): ");
-    Serial.print(avgDistance);
+    Serial.print(avgDistance, 2);  // Print with 2 decimals
     Serial.println(" cm");
     delay(2000);
   }
