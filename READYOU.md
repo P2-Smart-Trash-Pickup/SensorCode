@@ -1,1 +1,0 @@
-i aint reading allat
