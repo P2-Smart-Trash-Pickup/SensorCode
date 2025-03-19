@@ -4,6 +4,7 @@
 VL53L0X sensor;
 int sensorMode = 0;       // 0 = VL53L0X, 1 = HC-SR04
 int lastSensorMode = -1;  // to track mode changes
+int faultCounter = 0;     // counts consecutive unrealistic measurements
 
 #define echoPin 11  // For HC-SR04
 #define trigPin 10  // For HC-SR04
@@ -54,6 +55,8 @@ void loop() {
     }
   }
 
+  float avgDistance = 0.0;
+  
   if (sensorMode == 0) {
     // VL53L0X: Average 10 measurements
     int numReadings = 10;
@@ -67,12 +70,11 @@ void loop() {
       sum += distance;
       delay(50);
     }
-    uint16_t avgDistance = sum / numReadings;
-    float distance_cm = avgDistance / 10.0;
+    uint16_t avgReading = sum / numReadings;
+    avgDistance = avgReading / 10.0;  // converting mm to cm (dividing by 10)
     Serial.print("Distance (VL53L0X): ");
-    Serial.print(distance_cm, 1);
+    Serial.print(avgDistance, 1);
     Serial.println(" cm");
-    delay(2000);
   } else {
     // HC-SR04: Average 50 measurements
     int numReadings = 50;
@@ -86,13 +88,48 @@ void loop() {
       long duration = pulseIn(echoPin, HIGH);
       float distance = (duration * 0.0344) / 2.0;  // distance in cm
       sum += distance;
-      delay(50);  // Short delay between readings
+      delay(50);
     }
-    float avgDistance = sum / numReadings;
+    avgDistance = sum / numReadings;
     avgDistance += 1.5;  // Adjust for the sensor height
     Serial.print("Distance (HC-SR04): ");
-    Serial.print(avgDistance, 2);  // Print with 2 decimals
+    Serial.print(avgDistance, 2);
     Serial.println(" cm");
-    delay(2000);
   }
+  
+  // Hardware error handling:
+  // If the measured average is over 100.00 cm, consider it a fault.
+  if (avgDistance > 100.0) {
+    faultCounter++;
+    Serial.print("Fault count: ");
+    Serial.println(faultCounter);
+    
+    // On the 10th consecutive fault, pause for 5 minutes
+    if (faultCounter == 10) {
+      Serial.println("10 consecutive faults detected, pausing for 1 minute.");
+      delay(300000);  // 5 minutes = 300000 ms
+    }
+    
+    // After 20 consecutive faults, alert and wait for reset command "99"
+    if (faultCounter >= 20) {
+      Serial.println("Fault detected: Sensor may be faulty. Technician required.");
+      Serial.println("Enter '99' to reset fault counter and resume measurements.");
+      while (true) {
+        if (Serial.available() > 0) {
+          String input = Serial.readString();
+          input.trim();
+          if (input == "99") {
+            Serial.println("Reset command received. Resuming measurements.");
+            faultCounter = 0;
+            break;
+          }
+        }
+      }
+    }
+  } else {
+    // If the measurement is within realistic limits, reset fault counter.
+    faultCounter = 0;
+  }
+  
+  delay(2000); // Wait 2 seconds before the next measurement cycle.
 }
