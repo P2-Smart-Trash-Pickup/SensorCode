@@ -1,0 +1,124 @@
+#include <HX711_ADC.h>
+#include <Wire.h>
+#include <VL53L0X.h>
+
+#if defined(ESP8266) || defined(ESP32) || defined(AVR)
+#include <EEPROM.h>
+#endif
+
+// -------------------------
+// Weight Sensor Definitions
+// -------------------------
+const int HX711_dout = 4; 
+const int HX711_sck  = 5;
+HX711_ADC LoadCell(HX711_dout, HX711_sck);
+float calibrationValue = -40.10; // Adjust as needed
+unsigned long weightLastPrint = 0;
+const unsigned long weightPrintInterval = 10; // ms between prints
+
+// -------------------------
+// Other Sensor Definitions
+// -------------------------
+VL53L0X sensor;
+int sensorMode = 0;  // 0 = VL53L0X, 1 = HC-SR04
+#define echoPin 11  // For HC-SR04
+#define trigPin 10  // For HC-SR04
+unsigned long sensorLastUpdate = 0;
+const unsigned long sensorUpdateInterval = 2000; // ms between other sensor readings
+
+// Function to initialize the other sensor based on sensorMode
+void initOtherSensor() {
+  if (sensorMode == 0) {
+    // VL53L0X sensor initialization
+    Wire.begin();
+    if (!sensor.init()) {
+      Serial.println("Failed to initialize VL53L0X sensor!");
+      while (1);
+    }
+    sensor.startContinuous();
+    Serial.println("VL53L0X sensor initialized.");
+  } else {
+    // HC-SR04 sensor initialization
+    pinMode(trigPin, OUTPUT);
+    pinMode(echoPin, INPUT);
+    Serial.println("HC-SR04 sensor initialized.");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);  // Wait for serial port to connect
+  Serial.println("Starting Combined Sketch with Fast Weight Sensor...");
+
+  // -------- Weight Sensor Setup --------
+  LoadCell.begin();
+  unsigned long stabilizingTime = 2000;  // Allow sensor to stabilize
+  boolean tareFlag = true;               // Perform tare on startup
+  LoadCell.start(stabilizingTime, tareFlag);
+  if (LoadCell.getTareTimeoutFlag()) {
+    Serial.println("HX711 Tare Timeout. Check wiring.");
+    while (1);
+  } else {
+    LoadCell.setCalFactor(calibrationValue);
+    Serial.println("Weight sensor initialized.");
+  }
+
+  // -------- Other Sensor Setup --------
+  Serial.println("Enter 0 for VL53L0X sensor, 1 for HC-SR04 sensor (via Serial).");
+  initOtherSensor();
+}
+
+void loop() {
+  // --- Fast Weight Sensor Update ---
+  if (LoadCell.update()) {
+    // Get new data as soon as it's available
+    float weight = LoadCell.getData();
+    // Print at the defined interval (this prevents overwhelming Serial)
+    if (millis() - weightLastPrint >= weightPrintInterval) {
+      Serial.print("Weight: ");
+      Serial.println(weight);
+      weightLastPrint = millis();
+    }
+  }
+  
+  // --- Serial Command Handling ---
+  if (Serial.available() > 0) {
+    char inByte = Serial.read();
+    if (inByte == 't') {
+      LoadCell.tareNoDelay();
+    } else if (inByte == '0' || inByte == '1') {
+      sensorMode = inByte - '0';
+      initOtherSensor();
+    }
+  }
+  
+  // --- Other Sensor Update (Non-Blocking) ---
+  if (millis() - sensorLastUpdate >= sensorUpdateInterval) {
+    sensorLastUpdate = millis();
+    float distance = 0;
+    if (sensorMode == 0) {
+      // VL53L0X sensor reading
+      uint16_t reading = sensor.readRangeContinuousMillimeters();
+      if (sensor.timeoutOccurred()) {
+        Serial.println("VL53L0X Timeout!");
+      } else {
+        distance = reading / 10.0; // Convert mm to cm
+        Serial.print("Distance (VL53L0X): ");
+        Serial.print(distance, 1);
+        Serial.println(" cm");
+      }
+    } else {
+      // HC-SR04 sensor reading (using very short delays)
+      digitalWrite(trigPin, LOW);
+      delayMicroseconds(2);
+      digitalWrite(trigPin, HIGH);
+      delayMicroseconds(10);
+      digitalWrite(trigPin, LOW);
+      long duration = pulseIn(echoPin, HIGH);
+      distance = (duration * 0.0344) / 2.0;
+      Serial.print("Distance (HC-SR04): ");
+      Serial.print(distance, 2);
+      Serial.println(" cm");
+    }
+  }
+}
