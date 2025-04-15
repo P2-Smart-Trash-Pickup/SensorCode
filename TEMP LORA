@@ -1,0 +1,212 @@
+#include <HX711_ADC.h>
+#include <Wire.h>
+#include <VL53L0X.h>
+#include <lmic.h>    // LoRaWAN library
+#include <hal/hal.h> // Required for LMIC
+
+// =====================================
+// ioNet/Cibecom LoRaWAN Configuration
+// =====================================
+// REPLACE THESE VALUES WITH ioNet's PROVIDED CREDENTIALS!
+static const u1_t PROGMEM NWKSKEY[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static const u1_t PROGMEM APPSKEY[16] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static const u4_t DEVADDR = 0x00000000; // Replace with ioNet's DevAddr
+
+// --- LMIC Callbacks (unused for ABP) ---
+void os_getArtEui(u1_t* buf) {}
+void os_getDevEui(u1_t* buf) {}
+void os_getDevKey(u1_t* buf) {}
+
+// =====================================
+// Sensor Definitions (Unchanged)
+// =====================================
+const int HX711_dout = 4;
+const int HX711_sck = 5;
+HX711_ADC LoadCell(HX711_dout, HX711_sck);
+float calibrationValue = -40.10;
+unsigned long weightLastPrint = 0;
+const unsigned long weightPrintInterval = 10;
+
+VL53L0X sensor;
+int sensorMode = 0;
+#define echoPin 11
+#define trigPin 10
+unsigned long sensorLastUpdate = 0;
+const unsigned long sensorUpdateInterval = 2000;
+float currentDistance = 0.0;
+
+// =====================================
+// LoRa Payload (12 weights + 2 distances)
+// =====================================
+#pragma pack(push, 1) // No padding
+struct LoRaPayload {
+  uint32_t timestamp;
+  int16_t weights[12];  // 12 x 2B = 24B
+  uint16_t distances[2]; // 2 x 2B = 4B
+}; // Total: 32B
+#pragma pack(pop)
+LoRaPayload loraData;
+
+// =====================================
+// LoRa Transmission Control
+// =====================================
+unsigned long lastLoraSend = 0;
+const unsigned long loraInterval = 40000; // 40s
+bool loraBusy = false;
+
+// =====================================
+// Setup (Initialize Sensors + LoRa)
+// =====================================
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+
+  // --- Weight Sensor ---
+  LoadCell.begin();
+  LoadCell.start(2000, true); // Stabilize + tare
+  if (LoadCell.getTareTimeoutFlag()) {
+    Serial.println("HX711 Timeout! Check wiring.");
+    while (1);
+  }
+  LoadCell.setCalFactor(calibrationValue);
+
+  // --- Distance Sensor ---
+  initOtherSensor();
+
+  // --- LoRaWAN (ioNet) ---
+  os_init();
+  LMIC_reset();
+  LMIC_setSession(0x1, DEVADDR, NWKSKEY, APPSKEY); // ABP mode
+  // Configure EU868 channels (ioNet likely uses sub-band 2: 868.1-868.5 MHz)
+  LMIC_setupChannel(0, 868100000, DR_RANGE_MAP(DR_SF7, DR_SF12)); // SF7-SF12
+  LMIC_setAdrMode(true); // Adaptive Data Rate
+  LMIC_setLinkCheckMode(0); // Disable link checks
+
+  Serial.println("Initialization complete!");
+}
+
+// =====================================
+// Main Loop (Sensor Updates + LoRa)
+// =====================================
+void loop() {
+  os_runloop_once(); // LMIC background task
+
+  // --- Weight Sensor ---
+  if (LoadCell.update()) {
+    float weight = LoadCell.getData();
+    if (millis() - weightLastPrint >= weightPrintInterval) {
+      Serial.print("Weight: ");
+      Serial.println(weight, 2);
+      weightLastPrint = millis();
+    }
+  }
+
+  // --- Distance Sensor ---
+  if (millis() - sensorLastUpdate >= sensorUpdateInterval) {
+    sensorLastUpdate = millis();
+    updateDistance();
+  }
+
+  // --- Serial Commands ---
+  if (Serial.available() > 0) {
+    handleSerialCommand();
+  }
+
+  // --- LoRa Transmission (Every 40s) ---
+  if (millis() - lastLoraSend >= loraInterval && !loraBusy) {
+    prepareLoraPayload();
+    startLoraTransmission();
+  }
+}
+
+// =====================================
+// Helper Functions
+// =====================================
+
+// --- Initialize Distance Sensor ---
+void initOtherSensor() {
+  if (sensorMode == 0) {
+    Wire.begin();
+    if (!sensor.init()) {
+      Serial.println("VL53L0X init failed!");
+      while (1);
+    }
+    sensor.startContinuous();
+    Serial.println("VL53L0X ready.");
+  } else {
+    pinMode(trigPin, OUTPUT);
+    pinMode(echoPin, INPUT);
+    Serial.println("HC-SR04 ready.");
+  }
+}
+
+// --- Update Distance Reading ---
+void updateDistance() {
+  if (sensorMode == 0) {
+    uint16_t mm = sensor.readRangeContinuousMillimeters();
+    if (!sensor.timeoutOccurred()) {
+      currentDistance = mm / 10.0; // mm → cm
+      Serial.print("Distance (VL53L0X): ");
+      Serial.print(currentDistance, 1);
+      Serial.println(" cm");
+    }
+  } else {
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+    long duration = pulseIn(echoPin, HIGH);
+    currentDistance = duration * 0.0172; // µs → cm
+    Serial.print("Distance (HC-SR04): ");
+    Serial.print(currentDistance, 2);
+    Serial.println(" cm");
+  }
+}
+
+// --- Handle Serial Commands ---
+void handleSerialCommand() {
+  char c = Serial.read();
+  if (c == 't') {
+    LoadCell.tareNoDelay();
+    Serial.println("Tare command sent.");
+  } else if (c == '0' || c == '1') {
+    sensorMode = c - '0';
+    initOtherSensor();
+  }
+}
+
+// --- Prepare LoRa Payload ---
+void prepareLoraPayload() {
+  loraData.timestamp = millis();
+
+  // Store 12 weight readings (float → int16_t)
+  for (int i = 0; i < 12; i++) {
+    loraData.weights[i] = (int16_t)(LoadCell.getData() * 100); // 25.12kg → 2512
+  }
+
+  // Store 2 distance readings (float → uint16_t)
+  loraData.distances[0] = (uint16_t)(currentDistance * 10); // 1.23m → 12
+  loraData.distances[1] = loraData.distances[0]; // Repeat or add second sensor
+}
+
+// --- Start LoRa Transmission ---
+void startLoraTransmission() {
+  loraBusy = true;
+  LMIC_setTxData2(
+    1,                   // Port number (1-223)
+    (uint8_t*)&loraData, // Payload
+    sizeof(loraData),    // 32 bytes
+    0                    // No ACK
+  );
+  Serial.println("LoRa packet queued!");
+  lastLoraSend = millis();
+}
+
+// --- LMIC Event Handler ---
+void onEvent(ev_t ev) {
+  if (ev == EV_TXCOMPLETE) {
+    Serial.println("LoRa transmission complete!");
+    loraBusy = false;
+  }
+}
