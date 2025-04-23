@@ -10,19 +10,23 @@
 // Weight Sensor Definitions
 // -------------------------
 const int HX711_dout = 4; 
-const int HX711_sck  = 5;
+const int HX711_sck = 5;
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 float calibrationValue = -40.10; // Adjust as needed
 unsigned long weightLastPrint = 0;
-const unsigned long weightPrintInterval = 10; // ms between prints
+const unsigned long weightPrintInterval = 1000; // ms between average prints (changed from 10 to 1000 for better averaging)
+const int weightHistorySize = 100; // Number of samples to average
+float weightHistory[weightHistorySize]; // Array to store weight samples
+int weightHistoryIndex = 0; // Current position in the array
+bool weightHistoryFilled = false; // Flag to indicate if array is full
 
 // -------------------------
 // Other Sensor Definitions
 // -------------------------
 VL53L0X sensor;
 int sensorMode = 0;  // 0 = VL53L0X, 1 = HC-SR04
-#define echoPin 11  // For HC-SR04
-#define trigPin 10  // For HC-SR04
+#define echoPin 10  // For HC-SR04
+#define trigPin 11  // For HC-SR04
 unsigned long sensorLastUpdate = 0;
 const unsigned long sensorUpdateInterval = 2000; // ms between other sensor readings
 
@@ -50,6 +54,11 @@ void setup() {
   while (!Serial);  // Wait for serial port to connect
   Serial.println("Starting Combined Sketch with Fast Weight Sensor...");
 
+  // Initialize weight history array
+  for (int i = 0; i < weightHistorySize; i++) {
+    weightHistory[i] = 0.0;
+  }
+
   // -------- Weight Sensor Setup --------
   LoadCell.begin();
   unsigned long stabilizingTime = 2000;  // Allow sensor to stabilize
@@ -73,10 +82,33 @@ void loop() {
   if (LoadCell.update()) {
     // Get new data as soon as it's available
     float weight = LoadCell.getData();
-    // Print at the defined interval (this prevents overwhelming Serial)
+    
+    // Store the weight in the history array
+    weightHistory[weightHistoryIndex] = weight;
+    weightHistoryIndex++;
+    
+    // Wrap around when we reach the end of the array
+    if (weightHistoryIndex >= weightHistorySize) {
+      weightHistoryIndex = 0;
+      weightHistoryFilled = true;
+    }
+    
+    // Print average at the defined interval
     if (millis() - weightLastPrint >= weightPrintInterval) {
-      Serial.print("Weight: ");
-      Serial.println(weight);
+      float sum = 0.0;
+      int count = weightHistoryFilled ? weightHistorySize : weightHistoryIndex;
+      
+      for (int i = 0; i < count; i++) {
+        sum += weightHistory[i];
+      }
+      
+      float average = sum / count;
+      Serial.print("Average Weight (");
+      Serial.print(count);
+      Serial.print(" samples): ");
+      Serial.print(average);
+      Serial.println(" g");
+      
       weightLastPrint = millis();
     }
   }
@@ -86,6 +118,9 @@ void loop() {
     char inByte = Serial.read();
     if (inByte == 't') {
       LoadCell.tareNoDelay();
+      // Clear the weight history after tare
+      weightHistoryIndex = 0;
+      weightHistoryFilled = false;
     } else if (inByte == '0' || inByte == '1') {
       sensorMode = inByte - '0';
       initOtherSensor();
