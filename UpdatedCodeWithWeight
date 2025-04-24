@@ -25,8 +25,8 @@ bool weightHistoryFilled = false; // Flag to indicate if array is full
 // -------------------------
 VL53L0X sensor;
 int sensorMode = 0;  // 0 = VL53L0X, 1 = HC-SR04
-#define echoPin 10  // For HC-SR04
-#define trigPin 11  // For HC-SR04
+#define echoPin 2  // For HC-SR04
+#define trigPin 3  // For HC-SR04
 unsigned long sensorLastUpdate = 0;
 const unsigned long sensorUpdateInterval = 2000; // ms between other sensor readings
 
