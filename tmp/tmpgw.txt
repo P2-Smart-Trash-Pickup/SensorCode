@@ -1,0 +1,49 @@
+#include <SPI.h>
+#include <RH_RF95.h>
+
+// Dragino Shield Pins
+#define RFM95_CS 10
+#define RFM95_INT 2
+#define RFM95_RST 9
+
+RH_RF95 rf95(RFM95_CS, RFM95_INT);
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+  
+  pinMode(RFM95_RST, OUTPUT);
+  digitalWrite(RFM95_RST, HIGH);
+  delay(100);
+  digitalWrite(RFM95_RST, LOW);
+  delay(10);
+  digitalWrite(RFM95_RST, HIGH);
+  delay(10);
+
+  if (!rf95.init()) {
+    Serial.println("LoRa init failed");
+    while (1);
+  }
+  
+  rf95.setFrequency(868.0);
+  rf95.setSpreadingFactor(9);
+  rf95.setSignalBandwidth(125000);
+  Serial.println("Gateway ready");
+}
+
+void loop() {
+  if (rf95.available()) {
+    uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+    uint8_t len = sizeof(buf);
+
+    if (rf95.recv(buf, &len)) {
+      // Print raw packet as hex
+      Serial.print("LORA:");
+      for (uint8_t i = 0; i < len; i++) {
+        if (buf[i] < 0x10) Serial.print("0");  // Pad single-digit hex
+        Serial.print(buf[i], HEX);
+      }
+      Serial.println();
+    }
+  }
+}
