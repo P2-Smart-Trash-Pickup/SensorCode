@@ -17,6 +17,7 @@ struct LoRaLightPacket {
   uint16_t weight1;
   uint16_t weight2;
   uint16_t distances[10];
+  float volume;
   uint8_t flags;
   uint16_t crc;
 };
@@ -41,6 +42,7 @@ byte aesKey[16] = {
 // -------------------------
 // System Configuration
 // -------------------------
+float unitVolume = 1.0;
 #define RFM95_CS 10
 #define RFM95_INT 2
 #define RFM95_RST 9
@@ -324,6 +326,7 @@ void preparePacket(LoRaLightPacket& packet) {
     packet.distances[i] = distanceHistory[idx];
   }
 
+  packet.volume = unitVolume;  
   packet.flags = sensorMode & FLAG_SENSOR_MODE;
   packet.crc = calculateCRC((uint8_t*)&packet, sizeof(packet) - 2);
 
@@ -341,6 +344,7 @@ void preparePacket(LoRaLightPacket& packet) {
   Serial.print(F("  Weight2: "));
   Serial.print(packet.weight2);
   Serial.println(F("g"));
+  Serial.print(F("  Volume: ")); Serial.println(packet.volume); 
   Serial.print(F("  Flags: 0x"));
   Serial.println(packet.flags, HEX);
   Serial.print(F("  CRC: 0x"));
