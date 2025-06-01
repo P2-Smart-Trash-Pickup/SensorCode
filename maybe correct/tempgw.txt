@@ -41,6 +41,7 @@ struct LoRaLightPacket {
   uint16_t weight1;
   uint16_t weight2;
   uint16_t distances[10];
+  float volume;
   uint8_t flags;
   uint16_t crc;
 };
@@ -405,6 +406,8 @@ void printPacketDetails(LoRaLightPacket* packet) {
   Serial.print("g, ");
   Serial.print(packet->weight2);
   Serial.println("g");
+  Serial.print("Volume: ");
+  Serial.println(packet->volume);
 
   Serial.println("Distances (mm):");
   for (int i = 0; i < 10; i++) {
