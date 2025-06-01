@@ -44,7 +44,7 @@ except InfluxDBError as e:
 # ------------------------------------------------------------------------------
 # PACKET PARSER (expects exactly 36 bytes)
 # ------------------------------------------------------------------------------
-PACKET_FMT  = '< B I I H H ' + 'H'*10 + ' B H'
+PACKET_FMT  = '< B I I H H ' + 'H'*10 + 'f B H'
 PACKET_SIZE = struct.calcsize(PACKET_FMT)
 
 def parse_decrypted_packet(hex_str):
@@ -63,6 +63,7 @@ def parse_decrypted_packet(hex_str):
             'weight1':      unpack[3] if unpack[3]<65000 else 0,
             'weight2':      unpack[4] if unpack[4]<65000 else 0,
             'distances':    [d if d<65000 else 0 for d in unpack[5:15]],
+            'volume':       unpack[15],
             'flags':        unpack[15],
             'crc':          unpack[16],
             'sensor_mode':  'Ultrasonic' if (unpack[15]&1) else 'ToF'
@@ -90,6 +91,7 @@ def pretty_print_point(pkt):
     print(f"    packet_counter: {pkt['packetCounter']}")
     print(f"    weight1:        {pkt['weight1']}")
     print(f"    weight2:        {pkt['weight2']}")
+    print(f"    volume:         {pkt['volume']}")
     print(f"    flags:          {pkt['flags']}")
     print(f"    crc:            {pkt['crc']}")
     for i, d in enumerate(pkt['distances']):
@@ -110,6 +112,7 @@ def write_to_influx(pkt):
         .field("packet_counter",pkt['packetCounter']) \
         .field("weight1",       pkt['weight1']) \
         .field("weight2",       pkt['weight2']) \
+        .field("volume", pkt['volume']) \
         .field("flags",         pkt['flags']) \
         .field("crc",           pkt['crc']) \
         .time(datetime.now(timezone.utc), WritePrecision.NS)
